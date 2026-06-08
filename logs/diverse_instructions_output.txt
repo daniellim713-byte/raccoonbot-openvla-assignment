@@ -1,0 +1,17 @@
+=== Diverse Instruction Examples ===
+[red] pick up the red trash and place it on the red pad
+[red] collect the red box and move it to the red area
+[red] sort the red box into the red zone
+
+[blue] sort the blue can into the blue zone
+[blue] collect the blue can and move it to the blue area
+[blue] place the blue can onto the blue pad
+
+[yellow] sort the yellow bottle into the yellow zone
+[yellow] place the yellow bottle onto the yellow pad
+[yellow] grab the yellow bottle and put it on the yellow pad
+
+[green] place the green box onto the green pad
+[green] place the green box onto the green pad
+[green] sort the green box into the green zone
+
