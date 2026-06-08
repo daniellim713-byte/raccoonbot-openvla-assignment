@@ -1,0 +1,98 @@
+<mujoco model="Raccoon_stacking"> 
+  <include file="RaccoonBot_S.xml"/>
+  <statistic center="0.0 0 0.2" extent="0.5"/>
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.1 0.1 0.1" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="120" elevation="-20"/>
+  </visual>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge"
+      rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+      markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="20 20" reflectance="0.0"/>
+  </asset>
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0.5 0.5 0.05" type="plane" material="groundplane"/>
+    <camera name="front_view" pos="0.0 0.50 0.13" xyaxes="-1 0 0 0 -0.18 0.98" fovy="45"/>
+
+    <!-- ===== 빨강 탑 (원형/cylinder) ===== -->
+    <!-- 가장 큰 빨강 (5.1cm, 고정) -->
+    <geom name="red_base" type="cylinder" size="0.0255 0.004"
+      pos="-0.06 0.20 0.004" rgba="0.8 0.1 0.1 1" contype="1" conaffinity="1"/>
+    <!-- 중간1 빨강 (4.2cm, 고정) -->
+    <geom name="red_mid1" type="cylinder" size="0.021 0.004"
+      pos="-0.06 0.20 0.012" rgba="0.9 0.3 0.3 1" contype="1" conaffinity="1"/>
+    <!-- 중간2 빨강 (3.3cm, 고정) -->
+    <geom name="red_mid2" type="cylinder" size="0.0165 0.004"
+      pos="-0.06 0.20 0.020" rgba="1.0 0.5 0.5 1" contype="1" conaffinity="1"/>
+    <!-- 가장 작은 빨강 (2.7cm, 집을 것) -->
+    <body name="target_object" pos="-0.05 0.16 0.006">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="0.05" diaginertia="0.00000001 0.00000001 0.00000001"/>
+      <geom name="geom_red" type="cylinder" size="0.0135 0.004"
+        rgba="1.0 0.6 0.6 1" friction="1 1 1" condim="6"
+        solimp="0.99 0.99 0.001" solref="0.002 1"/>
+    </body>
+
+    <!-- ===== 노랑 탑 (육각형/box 근사) ===== -->
+    <!-- 가장 큰 노랑 (5.1cm, 고정) -->
+    <geom name="yellow_base" type="box" size="0.0255 0.0255 0.004"
+      pos="0.06 0.20 0.004" rgba="0.9 0.8 0.0 1" contype="1" conaffinity="1"/>
+    <!-- 중간1 노랑 (4.2cm, 고정) -->
+    <geom name="yellow_mid1" type="box" size="0.021 0.021 0.004"
+      pos="0.06 0.20 0.012" rgba="1.0 0.85 0.1 1" contype="1" conaffinity="1"/>
+    <!-- 중간2 노랑 (3.3cm, 고정) -->
+    <geom name="yellow_mid2" type="box" size="0.0165 0.0165 0.004"
+      pos="0.06 0.20 0.020" rgba="1.0 0.9 0.3 1" contype="1" conaffinity="1"/>
+    <!-- 가장 작은 노랑 (2.7cm, 집을 것) -->
+    <body name="target_object_yellow" pos="0.05 0.16 0.006">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="0.05" diaginertia="0.00000001 0.00000001 0.00000001"/>
+      <geom name="geom_yellow" type="box" size="0.0135 0.0135 0.004"
+        rgba="1.0 0.95 0.5 1" friction="1 1 1" condim="6"
+        solimp="0.99 0.99 0.001" solref="0.002 1"/>
+    </body>
+
+    <!-- ===== 초록 탑 (별/box 근사) ===== -->
+    <!-- 가장 큰 초록 (5.1cm, 고정) -->
+    <geom name="green_base" type="box" size="0.0255 0.0255 0.004"
+      pos="-0.06 0.24 0.004" rgba="0.0 0.6 0.1 1" contype="1" conaffinity="1"/>
+    <!-- 중간1 초록 (4.2cm, 고정) -->
+    <geom name="green_mid1" type="box" size="0.021 0.021 0.004"
+      pos="-0.06 0.24 0.012" rgba="0.1 0.75 0.2 1" contype="1" conaffinity="1"/>
+    <!-- 중간2 초록 (3.3cm, 고정) -->
+    <geom name="green_mid2" type="box" size="0.0165 0.0165 0.004"
+      pos="-0.06 0.24 0.020" rgba="0.3 0.85 0.3 1" contype="1" conaffinity="1"/>
+    <!-- 가장 작은 초록 (2.7cm, 집을 것) -->
+    <body name="target_object_green" pos="-0.05 0.25 0.006">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="0.05" diaginertia="0.00000001 0.00000001 0.00000001"/>
+      <geom name="geom_green" type="box" size="0.0135 0.0135 0.004"
+        rgba="0.5 0.95 0.5 1" friction="1 1 1" condim="6"
+        solimp="0.99 0.99 0.001" solref="0.002 1"/>
+    </body>
+
+    <!-- ===== 파랑 탑 (사각형/box) ===== -->
+    <!-- 가장 큰 파랑 (5.5cm, 고정) -->
+    <geom name="blue_base" type="box" size="0.0275 0.0275 0.004"
+      pos="0.06 0.24 0.004" rgba="0.0 0.2 0.8 1" contype="1" conaffinity="1"/>
+    <!-- 중간1 파랑 (4.5cm, 고정) -->
+    <geom name="blue_mid1" type="box" size="0.0225 0.0225 0.004"
+      pos="0.06 0.24 0.012" rgba="0.1 0.4 0.9 1" contype="1" conaffinity="1"/>
+    <!-- 중간2 파랑 (3.5cm, 고정) -->
+    <geom name="blue_mid2" type="box" size="0.0175 0.0175 0.004"
+      pos="0.06 0.24 0.020" rgba="0.2 0.5 0.95 1" contype="1" conaffinity="1"/>
+    <!-- 가장 작은 파랑 (2.7cm, 집을 것) -->
+    <body name="target_object_blue" pos="0.05 0.25 0.006">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="0.05" diaginertia="0.00000001 0.00000001 0.00000001"/>
+      <geom name="geom_blue" type="box" size="0.0135 0.0135 0.004"
+        rgba="0.4 0.6 1.0 1" friction="1 1 1" condim="6"
+        solimp="0.99 0.99 0.001" solref="0.002 1"/>
+    </body>
+
+  </worldbody>
+</mujoco>
