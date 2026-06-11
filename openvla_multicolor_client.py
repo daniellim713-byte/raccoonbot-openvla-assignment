@@ -31,7 +31,7 @@ CYLINDER_COLORS = tuple(CYLINDER_BODY_BY_COLOR.keys())
 # 이전 단일 object range였던 x=(-0.18, 0.18), y=(0.10, 0.18)보다
 # x는 좁게, y는 조금 더 앞으로 제한한다.
 DEFAULT_OBJECT_X_RANGE = (-0.10, 0.10)
-DEFAULT_OBJECT_Y_RANGE = (0.16, 0.25)
+DEFAULT_OBJECT_Y_RANGE = (0.16, 0.20)
 DEFAULT_MIN_OBJECT_DISTANCE = 0.035
 DEFAULT_YAW_RANGE = (-math.pi / 4, math.pi / 4)
 DEFAULT_INSTRUCTION_TEMPLATE = "grasp the {color} cylinder"
@@ -442,6 +442,28 @@ def rollout(
                 timeout=request_timeout,
             )
             action = response["action"]
+            # Auto-close gripper logic
+            ee_x, ee_y, ee_z = env.get_ee_pose()
+            obj_info = object_specs.get(target_color, {})
+            if not hasattr(env, "_grasped"):
+                env._grasped = False
+            if obj_info and not env._grasped:
+                obj_x, obj_y = float(obj_info.get("x", 0)), float(obj_info.get("y", 0))
+                dx_to_obj = abs(ee_x - obj_x)
+                dy_to_obj = abs(ee_y - obj_y)
+                if dx_to_obj < 0.03 and ee_y >= obj_y - 0.01 and ee_z <= 0.025:
+                    action = list(action)
+                    action[6] = 1.0
+                    env._grasped = True
+
+            # Always override gripper with our logic
+            action = list(action)
+            if env._grasped:
+                action[6] = 1.0
+                if ee_z < 0.08 and ee_z > 0.025:
+                    action[2] = 0.01
+            else:
+                action[6] = 0.0  # force open until grasped
 
             try:
                 exec_info = env.execute_delta_action7(

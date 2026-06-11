@@ -219,7 +219,7 @@ class SyncSimRaccoonEnv:
         ee_x, ee_y, ee_z = self.get_ee_pose()
 
         safe_x_min, safe_x_max = -0.18, 0.18
-        safe_y_min, safe_y_max = 0.05, 0.20
+        safe_y_min, safe_y_max = 0.05, 0.28
         safe_z_min, safe_z_max = 0.02, 0.11
 
         cur_dx, cur_dy, cur_dz = dx, dy, dz
