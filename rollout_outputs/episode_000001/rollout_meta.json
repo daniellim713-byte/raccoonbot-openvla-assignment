@@ -1,44 +1,44 @@
 {
-  "instruction": "stack the red piece on the red tower",
+  "instruction": "pick up the red trash and place it on the red pad",
   "target_color": "red",
   "target_body_name": "target_object",
   "all_object_init_poses": {
     "red": {
       "body_name": "target_object",
       "xy": [
-        -0.03155406831316401,
-        0.22178729420472748
+        -0.03263699033606504,
+        0.1845609275261216
       ],
-      "yaw": -0.6010735161690801
+      "yaw": -0.3562137281586784
     },
     "blue": {
       "body_name": "target_object_blue",
       "xy": [
-        0.01905456923287896,
-        0.16521423939447605
+        0.04083109489452469,
+        0.17642298748512805
       ],
-      "yaw": 0.3440284874114312
+      "yaw": -0.7252838106306484
     },
     "green": {
       "body_name": "target_object_green",
       "xy": [
-        -0.09338005951706758,
-        0.16504345198032014
+        -0.08355970896542533,
+        0.18319503550883032
       ],
-      "yaw": 0.2818056459330136
+      "yaw": -0.3103436793978683
     },
     "yellow": {
       "body_name": "target_object_yellow",
       "xy": [
-        0.04479625000553353,
-        0.21267996042886675
+        0.005367321709551523,
+        0.1828933215299003
       ],
-      "yaw": -0.13000006483933368
+      "yaw": 0.03710751205984952
     }
   },
   "args": {
-    "xml_path": "Raccoon_stacking.xml",
-    "unnorm_key": "raccoon_stacking",
+    "xml_path": "Raccoon_recycling.xml",
+    "unnorm_key": "raccoon_recycling",
     "camera_name": "front_view",
     "speed": 70,
     "settle_seconds_per_action": 0.8,
@@ -52,7 +52,7 @@
     ],
     "object_y_range": [
       0.16,
-      0.25
+      0.2
     ],
     "min_object_distance": 0.035
   }
