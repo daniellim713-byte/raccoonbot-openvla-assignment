@@ -5,10 +5,11 @@ import json
 import math
 import os
 import re
+import time
 from contextlib import nullcontext
 from getpass import getpass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import mujoco
 import numpy as np
@@ -17,6 +18,11 @@ from PIL import Image
 from sshtunnel import SSHTunnelForwarder
 
 from raccoon_env import SyncSimRaccoonEnv
+
+try:
+    from roboid import Raccoon
+except ImportError:
+    Raccoon = None
 
 
 CYLINDER_BODY_BY_COLOR = {
@@ -100,6 +106,226 @@ def maybe_tunnel_context(args: argparse.Namespace):
         return open_ssh_tunnel(args)
     return nullcontext(None)
 
+
+
+class RealRaccoonController:
+    """
+    실제 라쿤봇 하드웨어 제어 어댑터.
+
+    서버 이미지는 기존 코드 그대로 MuJoCo obs["image"]를 사용하고,
+    서버에서 받은 action은 먼저 SyncSimRaccoonEnv.execute_delta_action7()로
+    clipping/IK/retry가 적용된다. 그 결과 exec_info["target_xyz"]를
+    같은 IK 기준으로 실제 라쿤봇 관절 각도로 변환해 전송한다.
+    """
+
+    L1, L2, L3, L4 = 8.25, 10.0, 10.0, 8.0
+    HOME_DEGREES = (0.0, -10.0, -140.0, 60.0)
+
+    def __init__(
+        self,
+        require_ready: bool = True,
+        home_wait_seconds: float = 5.0,
+        beep_on_ready: bool = True,
+    ) -> None:
+        if Raccoon is None:
+            raise ImportError(
+                "roboid 패키지를 import할 수 없습니다. 실제 라쿤봇 제어 환경에서 실행하거나 "
+                "--use_real_robot 옵션을 끄세요."
+            )
+
+        self.hw = Raccoon()
+        ready = bool(getattr(getattr(self.hw, "_roboid", None), "_ready", False))
+        if not ready:
+            msg = "라쿤봇 하드웨어 연결에 실패했습니다. USB/Bluetooth 연결과 전원을 확인하세요."
+            if require_ready:
+                raise RuntimeError(msg)
+            print(f"[REAL_ROBOT WARN] {msg} 시뮬레이션 명령만 계속합니다.")
+            self.hw = None
+            return
+
+        self.go_home(wait_seconds=home_wait_seconds)
+        self.lockh()
+        self.open_gripper()
+
+        if beep_on_ready:
+            try:
+                self.hw.beep()
+            except Exception as exc:
+                print(f"[REAL_ROBOT WARN] beep 실패: {exc}")
+
+        print("[REAL_ROBOT] 하드웨어 연결 성공")
+
+    @property
+    def connected(self) -> bool:
+        return self.hw is not None
+
+    def _try_call(self, fn_name: str, *candidate_args: Sequence[Any]) -> bool:
+        """roboid 버전별 API 차이를 흡수하기 위한 작은 wrapper."""
+        if not self.connected:
+            return False
+        fn = getattr(self.hw, fn_name, None)
+        if fn is None:
+            return False
+
+        last_error: Optional[Exception] = None
+        for args in candidate_args:
+            try:
+                fn(*args)
+                return True
+            except TypeError as exc:
+                last_error = exc
+                continue
+        if last_error is not None:
+            raise last_error
+        return False
+
+    def _send_joint_degrees(self, degrees: Sequence[float], speed: int = 70) -> None:
+        degrees = [float(v) for v in degrees[:4]]
+        speed = int(speed)
+
+        # 일부 roboid 버전: set_degree(j, deg, speed) 또는 set_degree(j1, j2, j3, j4)
+        if self._try_call("set_degree", (*degrees, speed), tuple(degrees)):
+            return
+
+        # 현재 설치된 패키지에서 주로 쓰이는 이름: degree_to(...)
+        if self._try_call("degree_to", (*degrees, speed), tuple(degrees), ([1, 2, 3, 4], degrees, speed)):
+            return
+
+        # per-joint API만 있는 경우 fallback
+        per_joint_ok = True
+        for joint_id, degree in enumerate(degrees, start=1):
+            if not (
+                self._try_call("set_degree", (joint_id, degree, speed), (joint_id, degree))
+                or self._try_call("degree_to", (joint_id, degree, speed), (joint_id, degree))
+            ):
+                per_joint_ok = False
+                break
+        if per_joint_ok:
+            return
+
+        raise AttributeError("Raccoon 객체에서 set_degree/degree_to 관절 제어 API를 찾지 못했습니다.")
+
+    def _calc_inv_kinematics(self, x_cm: float, y_cm: float, z_cm: float) -> Optional[list[float]]:
+        if not (
+            isinstance(x_cm, (int, float))
+            and isinstance(y_cm, (int, float))
+            and isinstance(z_cm, (int, float))
+        ):
+            return None
+
+        if not ((-28.0 <= x_cm <= 28.0) and (-15.0 <= y_cm <= 28.0) and (0.0 <= z_cm <= 36.25)):
+            return None
+
+        x, y, z = y_cm, -x_cm, z_cm
+        th1 = math.atan2(y, x)
+        c1 = math.cos(th1)
+        s1 = math.sin(th1)
+
+        wx = x - self.L4 * c1
+        wy = y - self.L4 * s1
+        wz = z - self.L1
+
+        c3 = (wx * wx + wy * wy + wz * wz - self.L2 * self.L2 - self.L3 * self.L3) / (2.0 * self.L2 * self.L3)
+        if c3 < -1.0001 or c3 > 1.0001:
+            return None
+        c3 = float(np.clip(c3, -1.0, 1.0))
+
+        s3_abs = math.sqrt(max(0.0, 1.0 - c3 * c3))
+        th1_deg = math.degrees(th1)
+
+        for s3 in (-s3_abs, s3_abs):
+            th3 = math.atan2(s3, c3)
+
+            m1 = c3 * self.L3 + self.L2
+            m2 = wz
+            m3 = s3 * self.L3
+            m4 = c1 * wx + s1 * wy
+
+            c2 = m1 * m2 - m3 * m4
+            s2 = -m2 * m3 - m1 * m4
+            th2 = math.atan2(s2, c2)
+
+            th2_deg = math.degrees(th2)
+            th3_deg = math.degrees(th3)
+            th4_deg = -(th2_deg + th3_deg) - 90.0
+
+            if th1_deg < -120.0 or th1_deg > 120.0:
+                continue
+            if th2_deg < -90.0 or th2_deg > 30.0:
+                continue
+            if th3_deg < -150.0 or th3_deg > 0.0:
+                continue
+
+            return [th1_deg, th2_deg, th3_deg, th4_deg]
+
+        return None
+
+    def move_to(self, x_cm: float, y_cm: float, z_cm: float, speed: int = 70) -> list[float]:
+        angles = self._calc_inv_kinematics(float(x_cm), float(y_cm), float(z_cm))
+        if angles is None:
+            raise ValueError(f"[REAL_ROBOT] IK fail: ({x_cm:.2f}, {y_cm:.2f}, {z_cm:.2f}) cm")
+        self._send_joint_degrees(angles[:4], speed=speed)
+        return angles
+
+    def open_gripper(self) -> None:
+        if self.connected:
+            if not self._try_call("open_gripper", tuple()):
+                print("[REAL_ROBOT WARN] open_gripper API를 찾지 못했습니다.")
+
+    def close_gripper(self) -> None:
+        if self.connected:
+            if not self._try_call("close_gripper", tuple()):
+                print("[REAL_ROBOT WARN] close_gripper API를 찾지 못했습니다.")
+
+    def lockh(self) -> None:
+        if self.connected:
+            if not (self._try_call("lock_horz", tuple()) or self._try_call("lockh", tuple())):
+                print("[REAL_ROBOT WARN] gripper horizontal lock API를 찾지 못했습니다.")
+
+    def lockv(self) -> None:
+        if self.connected:
+            if not (self._try_call("lock_vert", tuple()) or self._try_call("lockv", tuple())):
+                print("[REAL_ROBOT WARN] gripper vertical lock API를 찾지 못했습니다.")
+
+    def unlock(self) -> None:
+        if self.connected:
+            self._try_call("unlock", tuple())
+
+    def go_home(self, wait_seconds: float = 0.0) -> None:
+        if self.connected:
+            self._send_joint_degrees(self.HOME_DEGREES, speed=50)
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+
+    def execute_from_exec_info(self, exec_info: Dict[str, Any], speed: int = 70) -> Dict[str, Any]:
+        tx, ty, tz = [float(v) for v in exec_info["target_xyz"]]
+        gripper = float(exec_info["gripper_cmd"])
+
+        angles = self.move_to(tx * 100.0, ty * 100.0, tz * 100.0, speed=speed)
+
+        if gripper >= 0.5:
+            self.close_gripper()
+            gripper_state = "close"
+        else:
+            self.open_gripper()
+            gripper_state = "open"
+
+        real_info = {
+            "target_xyz_m": [tx, ty, tz],
+            "target_xyz_cm": [tx * 100.0, ty * 100.0, tz * 100.0],
+            "joint_degrees": [float(v) for v in angles[:4]],
+            "gripper_state": gripper_state,
+        }
+        print(
+            f"[REAL_ROBOT] target_cm={[round(v, 2) for v in real_info['target_xyz_cm']]} | "
+            f"joint_deg={[round(v, 2) for v in real_info['joint_degrees']]} | "
+            f"gripper={gripper_state}"
+        )
+        return real_info
+
+    def close(self) -> None:
+        # roboid.Raccoon에는 명시적 close API가 없는 버전이 많아서 no-op 처리.
+        pass
 
 def print_success_log(step_idx: int, exec_info: Dict[str, Any]) -> None:
     final_delta_xyz = [round(float(v), 4) for v in exec_info["final_delta_xyz"]]
@@ -357,6 +583,11 @@ def rollout(
     object_x_range: Tuple[float, float] = DEFAULT_OBJECT_X_RANGE,
     object_y_range: Tuple[float, float] = DEFAULT_OBJECT_Y_RANGE,
     min_object_distance: float = DEFAULT_MIN_OBJECT_DISTANCE,
+    use_real_robot: bool = False,
+    allow_sim_only_on_hw_fail: bool = False,
+    real_initial_wait_seconds: float = 5.0,
+    real_settle_seconds: Optional[float] = None,
+    real_go_home_on_exit: bool = False,
 ) -> None:
     out_dir = Path(output_dir) / f"episode_{episode_id:06d}"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -388,6 +619,7 @@ def rollout(
         camera_name=camera_name,
         use_viewer=use_viewer,
     )
+    real_robot: Optional[RealRaccoonController] = None
 
     try:
         reset_multicolor_scene(
@@ -397,6 +629,12 @@ def rollout(
         )
 
         env.lockh()
+        if use_real_robot:
+            real_robot = RealRaccoonController(
+                require_ready=not allow_sim_only_on_hw_fail,
+                home_wait_seconds=real_initial_wait_seconds,
+            )
+
         env.debug_check_current_ee_reachable()
 
         # Dataset collector와 동일하게 첫 observation 전에 free-joint cylinder를 안정화한다.
@@ -421,6 +659,11 @@ def rollout(
                 "object_x_range": list(object_x_range),
                 "object_y_range": list(object_y_range),
                 "min_object_distance": min_object_distance,
+                "use_real_robot": use_real_robot,
+                "allow_sim_only_on_hw_fail": allow_sim_only_on_hw_fail,
+                "real_initial_wait_seconds": real_initial_wait_seconds,
+                "real_settle_seconds": real_settle_seconds,
+                "real_go_home_on_exit": real_go_home_on_exit,
             },
         )
 
@@ -448,22 +691,20 @@ def rollout(
             if not hasattr(env, "_grasped"):
                 env._grasped = False
             if obj_info and not env._grasped:
-                obj_x, obj_y = float(obj_info.get("x", 0)), float(obj_info.get("y", 0))
+                obj_x = float(obj_info.get("x", 0))
+                obj_y = float(obj_info.get("y", 0))
                 dx_to_obj = abs(ee_x - obj_x)
-                dy_to_obj = abs(ee_y - obj_y)
                 if dx_to_obj < 0.03 and ee_y >= obj_y - 0.01 and ee_z <= 0.025:
                     action = list(action)
                     action[6] = 1.0
                     env._grasped = True
-
-            # Always override gripper with our logic
             action = list(action)
             if env._grasped:
                 action[6] = 1.0
                 if ee_z < 0.08 and ee_z > 0.025:
                     action[2] = 0.01
             else:
-                action[6] = 0.0  # force open until grasped
+                action[6] = 0.0
 
             try:
                 exec_info = env.execute_delta_action7(
@@ -472,6 +713,13 @@ def rollout(
                     delta_scale=delta_scale,
                     max_delta_xyz=max_delta_xyz,
                 )
+
+                if real_robot is not None and real_robot.connected:
+                    exec_info["real_robot"] = real_robot.execute_from_exec_info(exec_info, speed=speed)
+                    wait_seconds = settle_seconds_per_action if real_settle_seconds is None else real_settle_seconds
+                    if wait_seconds > 0:
+                        time.sleep(wait_seconds)
+
                 print_success_log(step_idx, exec_info)
 
                 env.settle_steps(seconds=settle_seconds_per_action)
@@ -502,6 +750,10 @@ def rollout(
         print("\n[STOP] interrupted by user")
 
     finally:
+        if real_robot is not None:
+            if real_go_home_on_exit and real_robot.connected:
+                real_robot.go_home(wait_seconds=0.0)
+            real_robot.close()
         env.close()
 
 
@@ -551,6 +803,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--object_x_range", type=float, nargs=2, default=DEFAULT_OBJECT_X_RANGE)
     parser.add_argument("--object_y_range", type=float, nargs=2, default=DEFAULT_OBJECT_Y_RANGE)
     parser.add_argument("--min_object_distance", type=float, default=DEFAULT_MIN_OBJECT_DISTANCE)
+    parser.add_argument("--use_real_robot", action="store_true", help="서버 action을 실제 라쿤봇 하드웨어에도 전송합니다.")
+    parser.add_argument(
+        "--allow_sim_only_on_hw_fail",
+        action="store_true",
+        help="--use_real_robot 상태에서 하드웨어 연결 실패 시 종료하지 않고 MuJoCo만 계속합니다.",
+    )
+    parser.add_argument("--real_initial_wait_seconds", type=float, default=5.0, help="실제 로봇 home 이동 후 대기 시간")
+    parser.add_argument(
+        "--real_settle_seconds",
+        type=float,
+        default=None,
+        help="실제 로봇 action 전송 후 대기 시간. 생략하면 --settle_seconds_per_action 값을 사용합니다.",
+    )
+    parser.add_argument("--real_go_home_on_exit", action="store_true", help="종료 시 실제 로봇을 home 자세로 보냅니다.")
     parser.add_argument(
         "--no_randomize_box",
         action="store_true",
@@ -610,6 +876,11 @@ def main() -> None:
             object_x_range=tuple(args.object_x_range),
             object_y_range=tuple(args.object_y_range),
             min_object_distance=args.min_object_distance,
+            use_real_robot=args.use_real_robot,
+            allow_sim_only_on_hw_fail=args.allow_sim_only_on_hw_fail,
+            real_initial_wait_seconds=args.real_initial_wait_seconds,
+            real_settle_seconds=args.real_settle_seconds,
+            real_go_home_on_exit=args.real_go_home_on_exit,
         )
 
 
