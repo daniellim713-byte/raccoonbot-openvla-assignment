@@ -36,8 +36,8 @@ CYLINDER_COLORS = tuple(CYLINDER_BODY_BY_COLOR.keys())
 # Dataset collection code와 동일한 기본 배치 조건.
 # 이전 단일 object range였던 x=(-0.18, 0.18), y=(0.10, 0.18)보다
 # x는 좁게, y는 조금 더 앞으로 제한한다.
-DEFAULT_OBJECT_X_RANGE = (-0.06, 0.06)
-DEFAULT_OBJECT_Y_RANGE = (0.17, 0.19)
+DEFAULT_OBJECT_X_RANGE = (-0.10, 0.10)
+DEFAULT_OBJECT_Y_RANGE = (0.16, 0.20)
 DEFAULT_MIN_OBJECT_DISTANCE = 0.035
 DEFAULT_YAW_RANGE = (-math.pi / 4, math.pi / 4)
 DEFAULT_INSTRUCTION_TEMPLATE = "grasp the {color} cylinder"
@@ -694,6 +694,10 @@ def rollout(
                 obj_x = float(obj_info.get("x", 0))
                 obj_y = float(obj_info.get("y", 0))
                 dx_to_obj = abs(ee_x - obj_x)
+                # x축 보정: x가 많이 차이나면 강제 이동
+                if dx_to_obj > 0.02:
+                    action = list(action)
+                    action[0] = 0.005 if obj_x > ee_x else -0.005
                 if dx_to_obj < 0.03 and ee_y >= obj_y - 0.01 and ee_z <= 0.025:
                     action = list(action)
                     action[6] = 1.0
